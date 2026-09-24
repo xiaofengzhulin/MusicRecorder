@@ -1,0 +1,26 @@
+# 构建输出
+[Bb]in/
+[Oo]bj/
+dist/
+release/
+
+# 发布产物（走 GitHub Release 分发，不入库）
+*.zip
+*.exe
+*.pdb
+
+# IDE / 编辑器
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 发布用临时文件
+release-notes-*.md
