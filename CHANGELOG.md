@@ -51,14 +51,26 @@
   并给 `PART_ContentHost` 补上标准的 `Focusable="False"` 与滚动条隐藏设置。
   已在 150% 缩放（144 DPI）下用最小复现探针确认根因并验证修复（修复后 viewport/文本高度均为 18 DIP，文字完整显示）。
 
-### 构建
+## [1.1.1] - 2026-09-27
 
-- **新增 32 位（x86）发布包**：`build.ps1` 支持 `-RuntimeIdentifier win-x86`（默认仍为 win-x64），
-  `MusicRecorder.csproj` 的 `<Platforms>` 由 `x64` 改为 `x64;x86`。32 位包
-  `MusicRecorder-v1.1.0-win-x86.zip`（单文件 64.6 MB）已随本版本发布提供，PE 头为 `0x014C`；
-  包内 `--selftest` 实测 `进程: x86`，SMTC / 设备检查、WASAPI 环回录制、LAME 编码与 MP3 解码校验全部通过。
-- **修复 `build.ps1` 中文乱码导致脚本无法执行**：脚本原为无 BOM 的 UTF-8，在 Windows PowerShell 5.1
-  （按 ANSI/GBK 解码）下中文字符串被拆断，报 `UnexpectedToken` 解析错误；已补 UTF-8 BOM，
+### 新增
+
+- **32 位（x86）版本**：新增 32 位安装包 `MusicRecorder-v1.1.1-win-x86.zip`（自包含单文件，64.6 MB），
+  供 32 位 Windows / 老设备使用；功能与 64 位版完全一致，目标机器无需安装 .NET 或任何依赖。
+  - 构建：`build.ps1` 支持 `-RuntimeIdentifier win-x86`（默认仍为 `win-x64`），
+    `MusicRecorder.csproj` 的 `<Platforms>` 由 `x64` 改为 `x64;x86`。
+  - 32 位包实测：PE 头 `0x014C`，包内 `--selftest` 显示 `进程: x86`，
+    SMTC / 设备检查、WASAPI 环回录制、LAME 编码与 MP3 解码校验全部通过。
+
+### 变更
+
+- 版本号来源同步：`MusicRecorder.csproj` 的 `<Version>` 与 `app.manifest` 的 `assemblyIdentity` 均升至 1.1.1；
+  `使用说明.txt` 系统要求改为「64 位与 32 位（x86）系统均支持」。
+
+### 修复
+
+- **修复 `build.ps1` 在 Windows PowerShell 5.1 下无法执行**：脚本原为无 BOM 的 UTF-8，
+  被按 ANSI/GBK 解码时中文字符串被拆断，报 `UnexpectedToken` 解析错误；已补 UTF-8 BOM，
   PowerShell 7 与 Windows PowerShell 5.1 均可正常执行。
 
 ## [1.0.0] - 2026-09-23

@@ -1,7 +1,7 @@
-# MusicRecorder 开发交接上下文（v1.1.0 基线 → 下一版本）
+# MusicRecorder 开发交接上下文（v1.1.1 基线 → 下一版本）
 
 > **用途**：新对话开始时只要读完本文件，就能获得开发所需的全部上下文，无需重新扫描仓库。
-> 生成时间：基于 `main` @ tag `v1.1.0`，Release 编译 0 warning / 0 error。
+> 生成时间：基于 `main` @ tag `v1.1.1`，Release 编译 0 warning / 0 error。
 > 面向使用者的完整文档见 [README.md](README.md)；版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
@@ -16,11 +16,11 @@ Windows 桌面小工具：**读取音乐软件当前播放的歌曲 → 自动�
 | --- | --- |
 | 工程目录 | `G:\aiagent\ms\MusicRecorder` |
 | 工作区根目录 | `G:\aiagent\ms` —— 根下的 `logs\`、`scan\` 属于**另一个无关项目**（图片恢复脚本），不要改动 |
-| Git | `main` 已发布 **v1.1.0**（v1.0.0 = `2c4318a`）。本文件描述的架构与红线对 v1.1.0 及之后的版本都适用 |
-| 版本号来源 | `MusicRecorder.csproj` 的 `<Version>1.1.0</Version>`（`build.ps1` 从这里读取，改版本只改这一处；`app.manifest` 里的 assemblyIdentity 也一并改） |
+| Git | `main` 已发布 **v1.1.1**（v1.1.0 = `5b19310`，v1.0.0 = `2c4318a`）。本文件描述的架构与红线对 v1.1.0 及之后的版本都适用 |
+| 版本号来源 | `MusicRecorder.csproj` 的 `<Version>1.1.1</Version>`（`build.ps1` 从这里读取，改版本只改这一处；`app.manifest` 里的 assemblyIdentity 也一并改） |
 | 未跟踪产物 | `dist\`、`release\`（已被 `.gitignore` 忽略；`*.exe`、`*.pdb`、`*.zip`、`release-notes-*.md` 也忽略） |
 | 基线验证 | .NET SDK `8.0.425`（`%USERPROFILE%\.dotnet\dotnet.exe`）；`dotnet build -c Release` → **0 warning / 0 error**，约 7 秒 |
-| 目标环境 | Windows 10 2004 (19041)+ / Windows 11，x64；发布版自包含运行时，用户无需装 .NET |
+| 目标环境 | Windows 10 2004 (19041)+ / Windows 11，x64 / x86（32 位）；发布版自包含运行时，用户无需装 .NET |
 
 ## 2. 技术栈
 
@@ -194,7 +194,7 @@ MusicRecorder.exe --pause                         # 暂停当前播放器
 | 日志 | `%LOCALAPPDATA%\MusicRecorder\logs\app-yyyyMMdd.log` |
 | 自检输出 | `%TEMP%\MusicRecorder-selftest.txt` |
 | 默认导出目录 | `%USERPROFILE%\Music\MusicRecorder` |
-| 发布产物 | `dist\MusicRecorder.exe`（≈70MB 单文件）、`release\MusicRecorder-v1.1.0-win-x64.zip` |
+| 发布产物 | `dist\MusicRecorder.exe`（≈70MB 单文件）、`release\MusicRecorder-v1.1.1-win-x64.zip`、`release\MusicRecorder-v1.1.1-win-x86.zip` |
 
 ---
 
@@ -202,7 +202,7 @@ MusicRecorder.exe --pause                         # 暂停当前播放器
 
 ```
 我在开发 Windows 音乐内录工具 MusicRecorder，工程在 G:\aiagent\ms\MusicRecorder，
-当前基线是 v1.1.0（tag v1.1.0，Release 编译 0 warning）。
+当前基线是 v1.1.1（tag v1.1.1，Release 编译 0 warning）。
 请先完整读 G:\aiagent\ms\MusicRecorder\HANDOFF.md，再按需读具体源码；
 不要修改 G:\aiagent\ms 根目录下的 logs\、scan\（那是无关项目）。
 
