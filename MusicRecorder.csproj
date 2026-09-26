@@ -15,7 +15,7 @@
     <Platforms>x64</Platforms>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Product>MusicRecorder</Product>
     <AssemblyTitle>MusicRecorder - 音乐播放器内录工具</AssemblyTitle>
     <Company>MusicRecorder</Company>

@@ -33,6 +33,19 @@ public partial class MainWindow : Window
     private string _lastStatus = "";
     private string _playerSignature = "";
 
+    /// <summary>「自动录制」是否已武装：检测到"开始播放"后置 false，播放停止/暂停后重新武装。</summary>
+    private bool _autoRecordArmed = true;
+    private bool _autoStarting;
+
+    /// <summary>「自动录制整张歌单」最近一次自动开录的歌曲标识，用于判定"换歌了，该录下一首"。</summary>
+    private string _lastAutoTrackKey = "";
+
+    /// <summary>正在弹「是否导出」对话框：模态期间定时器仍在跑，此时不要自动开录。</summary>
+    private bool _promptOpen;
+
+    /// <summary>刷新「目标播放器」下拉框时会触发 SelectionChanged，期间不要覆盖用户的选择。</summary>
+    private bool _suppressPlayerComboEvent;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -65,11 +78,20 @@ public partial class MainWindow : Window
         RestartCheck.IsChecked = _settings.RestartFromStart;
         PauseCheck.IsChecked = _settings.PausePlaybackWhenDone;
         OpenFolderCheck.IsChecked = _settings.OpenFolderWhenDone;
+        AutoRecordCheck.IsChecked = _settings.AutoStartRecordingWhenSongDetected;
+        PlaylistCheck.IsChecked = _settings.AutoRecordPlaylistMode;
+        // 自动录制开启时立即武装：若启动时播放器正在播放，会在下一轮轮询直接开录（与"勾选瞬间正在播放"行为一致）
+        _autoRecordArmed = true;
+        UpdatePlaylistUiState();
 
         PlayerCombo.DisplayMemberPath = nameof(PlayerOption.Label);
         PlayerCombo.SelectedValuePath = nameof(PlayerOption.AppId);
+        _suppressPlayerComboEvent = true;
         PlayerCombo.ItemsSource = new List<PlayerOption> { new("", "自动选择（推荐）") };
         PlayerCombo.SelectedIndex = 0;
+        _suppressPlayerComboEvent = false;
+        // 让「界面监控 / 自动录制」也按用户上次选定的播放器来判断
+        _engine.Media.PreferredAppId = _settings.PreferredPlayerAppId;
 
         RefreshDeviceList();
 
@@ -127,6 +149,118 @@ public partial class MainWindow : Window
         }
 
         if (finished is not null) HandleFinished(finished);
+
+        await MaybeAutoStartAsync();
+    }
+
+    /// <summary>
+    /// 自动录制判定。两种模式（可同时勾选，「整张歌单」是「单首」的超集）：
+    ///  · 自动录制（单首）：检测到播放器由「未播放」变为「播放中」时录一首；
+    ///  · 自动录制整张歌单：在上一条件之外，还跟踪换歌——上一首录完后自动接着录下一首，每首单独导出。
+    /// 用「上升沿 + 换歌」判定，且一次播放/一首歌只触发一次；播放停止后重新武装，
+    /// 避免录制结束时（我们主动暂停播放器）被误判成新的播放而反复自动开录。
+    /// </summary>
+    private async Task MaybeAutoStartAsync()
+    {
+        var autoSingle = AutoRecordCheck.IsChecked == true;
+        var playlist = PlaylistCheck.IsChecked == true;
+        if (!autoSingle && !playlist) { _autoRecordArmed = true; return; }
+        if (_promptOpen || _autoStarting || _engine.State != RecorderState.Idle) return;
+
+        var info = _engine.LastInfo;
+        if (info is null || !info.IsPlaying)
+        {
+            _autoRecordArmed = true;   // 播放已停止/暂停：重新武装，等下一次播放
+            return;
+        }
+
+        var risingEdge = _autoRecordArmed;   // 刚刚开始播放
+        // 歌单连录：换到别的歌了（只在能读到歌曲名时判定，否则无法区分"换歌"和"同一首"）
+        var trackChanged = playlist && info.HasTrack && info.TrackKey != _lastAutoTrackKey;
+        if (!risingEdge && !trackChanged) return;
+
+        _autoRecordArmed = false;
+        if (info.HasTrack) _lastAutoTrackKey = info.TrackKey;
+
+        _autoStarting = true;
+        try
+        {
+            if (trackChanged && !risingEdge)
+            {
+                Log.Info($"歌单连录：检测到换歌 → {info.DisplayName}");
+                SetStatus($"歌单连录：检测到换歌，正在把「{info.DisplayName}」倒回开头并开始录制…");
+            }
+            else
+            {
+                Log.Info(playlist ? "歌单连录：检测到播放开始" : "自动录制：检测到播放开始");
+                SetStatus(playlist
+                    ? "歌单连录：检测到播放开始，正在从头录制；放完会自动接着录下一首…"
+                    : "自动录制：检测到播放开始，正在把歌曲倒回开头并开始录制…");
+            }
+            // 换歌触发时强制回到 0:00：新歌此时已经播了一小段，靠"位置判据"会误判成"已在开头"
+            await StartRecordingAsync(auto: true, forceRestart: trackChanged);
+        }
+        finally
+        {
+            _autoStarting = false;
+        }
+    }
+
+    private void AutoRecordCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;   // XAML 初始化阶段不处理
+
+        _settings.AutoStartRecordingWhenSongDetected = AutoRecordCheck.IsChecked == true;
+        _settings.Save();
+        _autoRecordArmed = true;   // 勾选瞬间若正在播放，下一轮轮询即开始录制
+
+        if (AutoRecordCheck.IsChecked == true)
+        {
+            Log.Info("自动录制已开启");
+            SetStatus("自动录制已开启：在播放器里点播放就会自动倒回开头并开始录制这一首（不追踪换歌）。");
+        }
+        else
+        {
+            Log.Info("自动录制已关闭");
+            SetStatus(PlaylistCheck.IsChecked == true
+                ? "自动录制已关闭（歌单连录仍开启）。"
+                : "自动录制已关闭，改回手动点击「开始录制」。");
+        }
+    }
+
+    private void PlaylistCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+
+        _settings.AutoRecordPlaylistMode = PlaylistCheck.IsChecked == true;
+        _settings.Save();
+        _autoRecordArmed = true;
+        _lastAutoTrackKey = "";
+        UpdatePlaylistUiState();
+
+        if (PlaylistCheck.IsChecked == true)
+        {
+            Log.Info("歌单连录已开启");
+            SetStatus("歌单连录已开启：点播放开始录制，每首放完自动接着录下一首（每首单独导出）。");
+        }
+        else
+        {
+            Log.Info("歌单连录已关闭");
+            SetStatus("歌单连录已关闭。");
+        }
+        UpdateUiState();
+    }
+
+    /// <summary>歌单连录时必须连续播放，所以「结束后自动暂停播放」在该模式下不生效（置灰）。</summary>
+    private void UpdatePlaylistUiState()
+    {
+        var playlist = PlaylistCheck.IsChecked == true;
+        var busy = _engine.State is RecorderState.Preparing or RecorderState.Finishing;
+        PauseCheck.IsEnabled = !playlist && !_engine.IsRecording && !busy;
+        PauseCheck.Opacity = playlist ? 0.45 : 1.0;
+        PauseCheck.ToolTip = playlist
+            ? "歌单连录需要连续播放，每首录完不会暂停播放器，因此该项在当前模式下不生效。"
+            : "录制结束后自动暂停播放器，避免继续播下一首（歌单连录时该项不生效）。";
     }
 
     private void UpdateNowPlayingUi(NowPlayingInfo? info)
@@ -189,8 +323,28 @@ public partial class MainWindow : Window
         items.AddRange(sessions.Select(s => new PlayerOption(s.AppId, s.AppName + (s.IsPlaying ? "（播放中）" : ""))));
 
         var previous = (PlayerCombo.SelectedItem as PlayerOption)?.AppId ?? _settings.PreferredPlayerAppId;
-        PlayerCombo.ItemsSource = items;
-        PlayerCombo.SelectedItem = items.FirstOrDefault(i => i.AppId == previous && i.AppId.Length > 0) ?? items[0];
+        _suppressPlayerComboEvent = true;
+        try
+        {
+            PlayerCombo.ItemsSource = items;
+            PlayerCombo.SelectedItem = items.FirstOrDefault(i => i.AppId == previous && i.AppId.Length > 0) ?? items[0];
+        }
+        finally
+        {
+            _suppressPlayerComboEvent = false;
+        }
+    }
+
+    /// <summary>用户手动切换「目标播放器」：立即生效并持久化（监控与自动录制都按它来判断）。</summary>
+    private void PlayerCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressPlayerComboEvent || !IsLoaded) return;
+
+        var appId = (PlayerCombo.SelectedItem as PlayerOption)?.AppId ?? "";
+        _settings.PreferredPlayerAppId = appId;
+        _engine.Media.PreferredAppId = appId;
+        _settings.Save();
+        Log.Info($"目标播放器已切换为：{(string.IsNullOrEmpty(appId) ? "自动选择" : appId)}");
     }
 
     private static string DescribeStatus(string status) => status switch
@@ -218,15 +372,30 @@ public partial class MainWindow : Window
             return;
         }
 
+        await StartRecordingAsync(auto: false);
+    }
+
+    /// <summary>
+    /// 真正开始录制。手动点「开始录制」与两种自动录制模式共用这一条路径。
+    /// auto=true 时不弹窗（用户可能只是按了播放，不该被对话框打断），失败只写状态栏与日志。
+    /// forceRestart=true 用于歌单连录的换歌触发：强制把新歌倒回 0:00。
+    /// </summary>
+    private async Task<bool> StartRecordingAsync(bool auto, bool forceRestart = false)
+    {
+        if (_engine.State is RecorderState.Recording or RecorderState.Preparing) return false;
+
         SaveSettingsFromUi();
+        var playlist = PlaylistCheck.IsChecked == true;
         var options = new RecorderOptions
         {
             OutputFolder = _settings.OutputFolder,
             Bitrate = _settings.Bitrate,
             DeviceIndex = _settings.CaptureDeviceNumber,
             RestartFromStart = RestartCheck.IsChecked == true,
+            ForceRestart = forceRestart,
             PreferredAppId = _settings.PreferredPlayerAppId,
-            PausePlaybackWhenDone = PauseCheck.IsChecked == true,
+            // 歌单连录必须让播放器连续播放，否则每首录完就暂停、无法接着录下一首
+            PausePlaybackWhenDone = PauseCheck.IsChecked == true && !playlist,
         };
 
         RecordButton.IsEnabled = false;
@@ -244,16 +413,22 @@ public partial class MainWindow : Window
 
         if (!start.Success)
         {
-            SetStatus(start.Error ?? "开始录制失败。");
-            MessageBox.Show(this, start.Error ?? "开始录制失败。", "MusicRecorder",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            var message = start.Error ?? "开始录制失败。";
+            Log.Warn($"开始录制失败：{message}");
+            SetStatus(auto ? $"自动录制未开始：{message}" : message);
+            if (!auto)
+            {
+                MessageBox.Show(this, message, "MusicRecorder",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
             UpdateUiState();
-            return;
+            return false;
         }
 
         if (!string.IsNullOrWhiteSpace(start.Warning)) SetStatus("⚠ " + start.Warning);
         LastFileText.Text = $"正在录制到：{start.FilePath}";
         UpdateUiState();
+        return true;
     }
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -308,7 +483,17 @@ public partial class MainWindow : Window
     {
         foreach (var warning in result.Warnings) Log.Warn(warning);
 
-        if (!string.IsNullOrEmpty(result.FilePath) && File.Exists(result.FilePath))
+        var hasFile = !string.IsNullOrEmpty(result.FilePath) && File.Exists(result.FilePath);
+
+        // 时长过短 + 被手动暂停/打断：先问一句是否仍要导出，选「否」直接删掉录音文件
+        if (hasFile && result.NeedsExportConfirmation && !ConfirmShortRecording(result))
+        {
+            DiscardRecording(result);
+            UpdateUiState();
+            return;
+        }
+
+        if (hasFile)
         {
             LastFileText.Text = $"上次导出：{result.FilePath}";
             var extra = result.Warnings.Count > 0 ? "（" + string.Join("；", result.Warnings) + "）" : "";
@@ -331,6 +516,50 @@ public partial class MainWindow : Window
         }
 
         UpdateUiState();
+    }
+
+    /// <summary>询问用户是否导出这段「时长过短 + 被打断」的录音。返回 true = 导出。</summary>
+    private bool ConfirmShortRecording(RecordResult result)
+    {
+        _promptOpen = true;   // 模态期间定时器仍在跑，别让自动录制在此期间开录
+        try
+        {
+            var answer = MessageBox.Show(this,
+                $"录制时长过短（{FormatTime(result.Duration)}），音频可能被手动暂停或打断。\r\n\r\n" +
+                $"是否仍要导出这段音频？\r\n\r\n" +
+                $"文件：{Path.GetFileName(result.FilePath)}\r\n" +
+                $"目录：{Path.GetDirectoryName(result.FilePath)}",
+                "MusicRecorder · 录制时长过短", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (answer != MessageBoxResult.Yes) return false;
+            Log.Info($"用户选择导出过短录音：{result.FilePath}");
+            return true;
+        }
+        finally
+        {
+            _promptOpen = false;
+        }
+    }
+
+    /// <summary>按用户要求丢弃录音：删除已经生成的文件，且不更新「上次导出」。</summary>
+    private void DiscardRecording(RecordResult result)
+    {
+        var name = Path.GetFileName(result.FilePath);
+        try
+        {
+            File.Delete(result.FilePath);
+            result.Discarded = true;
+            result.FilePath = "";
+            Log.Info($"用户选择不导出，已删除录音文件：{name}（时长 {FormatTime(result.Duration)}）");
+            SetStatus($"已按你的选择丢弃这段录音（时长 {FormatTime(result.Duration)}），未生成文件。");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"删除录音文件失败：{name}", ex);
+            SetStatus($"录制时长过短，但删除文件失败：{ex.Message}");
+            MessageBox.Show(this,
+                $"未能删除录音文件：\r\n{ex.Message}\r\n\r\n文件仍在：{result.FilePath}",
+                "MusicRecorder", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     // ------------------------------------------------------------------ 引擎事件（后台线程）
@@ -359,8 +588,8 @@ public partial class MainWindow : Window
         BitrateCombo.IsEnabled = !recording && !busy;
         OutputFolderBox.IsEnabled = !recording && !busy;
         RestartCheck.IsEnabled = !recording && !busy;
-        PauseCheck.IsEnabled = !recording && !busy;
         BrowseButton.IsEnabled = !recording && !busy;
+        UpdatePlaylistUiState();   // 内含 PauseCheck 的可用性（歌单连录时置灰）
 
         RecordStateText.Text = _engine.State switch
         {
@@ -389,7 +618,15 @@ public partial class MainWindow : Window
         _settings.RestartFromStart = RestartCheck.IsChecked == true;
         _settings.PausePlaybackWhenDone = PauseCheck.IsChecked == true;
         _settings.OpenFolderWhenDone = OpenFolderCheck.IsChecked == true;
-        _settings.PreferredPlayerAppId = (PlayerCombo.SelectedItem as PlayerOption)?.AppId ?? "";
+        _settings.AutoStartRecordingWhenSongDetected = AutoRecordCheck.IsChecked == true;
+        _settings.AutoRecordPlaylistMode = PlaylistCheck.IsChecked == true;
+
+        // 目标播放器：只在用户确实选中了某个播放器时更新。
+        // 下拉框会随会话列表刷新而重建，若此时用户选的播放器没在运行，选中项会回落为「自动选择」，
+        // 这里不能因此把用户的选择抹掉。
+        var pickedAppId = (PlayerCombo.SelectedItem as PlayerOption)?.AppId;
+        if (!string.IsNullOrEmpty(pickedAppId)) _settings.PreferredPlayerAppId = pickedAppId;
+        _engine.Media.PreferredAppId = _settings.PreferredPlayerAppId;
         _settings.Save();
     }
 

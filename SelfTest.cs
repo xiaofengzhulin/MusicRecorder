@@ -338,25 +338,60 @@ public static class SelfTest
         }
     }
 
-    /// <summary>模拟一个"会向系统注册 SMTC 媒体会话"的播放器，用于端到端自检。</summary>
+    /// <summary>
+    /// 模拟一个"会向系统注册 SMTC 媒体会话"的播放器，用于端到端自检。
+    /// 单个文件：--fakeplayer --file=&lt;mp3&gt;
+    /// 播放列表：--fakeplayer --files="a.mp3;b.mp3;c.mp3"（播放器会自动连播，用于验证"自动录制整张歌单"）
+    /// 歌曲名默认取文件名，也可用 --titles="第一首;第二首;第三首" 逐首指定；--hold=N 表示播完后保持会话 N 秒。
+    /// </summary>
     private static int RunFakePlayer(string[] args)
     {
-        var file = GetString(args, "--file=") ?? Path.Combine(Path.GetTempPath(), "MusicRecorder", "test-song.mp3");
         var holdSeconds = GetInt(args, "--hold=", 15);
 
-        if (!File.Exists(file))
+        var files = new List<string>();
+        var multi = GetString(args, "--files=");
+        if (!string.IsNullOrWhiteSpace(multi))
         {
-            Console.WriteLine("找不到音频文件：" + file);
+            files.AddRange(multi.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        }
+        if (files.Count == 0)
+        {
+            files.Add(GetString(args, "--file=") ?? Path.Combine(Path.GetTempPath(), "MusicRecorder", "test-song.mp3"));
+        }
+
+        var titles = (GetString(args, "--titles=") ?? "")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var missing = files.Where(f => !File.Exists(f)).ToList();
+        if (missing.Count > 0)
+        {
+            Console.WriteLine("找不到音频文件：" + string.Join("；", missing));
             return 1;
         }
 
         try
         {
-            var player = new Windows.Media.Playback.MediaPlayer
+            var player = new Windows.Media.Playback.MediaPlayer();
+            var playlist = new Windows.Media.Playback.MediaPlaybackList();
+
+            for (var i = 0; i < files.Count; i++)
             {
-                Source = Windows.Media.Core.MediaSource.CreateFromUri(new Uri(file)),
-                AutoPlay = true,
-            };
+                var item = new Windows.Media.Playback.MediaPlaybackItem(
+                    Windows.Media.Core.MediaSource.CreateFromUri(new Uri(files[i])));
+
+                // 关键：歌曲信息要挂在 MediaPlaybackItem 的显示属性上，系统媒体会话才会带上标题/歌手
+                var display = item.GetDisplayProperties();
+                display.Type = Windows.Media.MediaPlaybackType.Music;
+                display.MusicProperties.Title = i < titles.Length ? titles[i] : Path.GetFileNameWithoutExtension(files[i]);
+                display.MusicProperties.Artist = "MusicRecorder 自检";
+                display.MusicProperties.AlbumTitle = "自检专辑";
+                item.ApplyDisplayProperties(display);
+
+                playlist.Items.Add(item);
+            }
+
+            player.Source = playlist;
+            player.AutoPlay = true;
 
             var controls = player.SystemMediaTransportControls;
             controls.IsEnabled = true;
@@ -365,15 +400,6 @@ public static class SelfTest
             controls.IsStopEnabled = true;
             controls.IsNextEnabled = true;
             controls.IsPreviousEnabled = true;
-
-            // 像真实音乐软件那样声明歌曲信息（QQ音乐/网易云/酷狗都会这么填）
-            var title = GetString(args, "--title=") ?? Path.GetFileNameWithoutExtension(file);
-            var updater = controls.DisplayUpdater;
-            updater.Type = Windows.Media.MediaPlaybackType.Music;
-            updater.MusicProperties.Title = title;
-            updater.MusicProperties.Artist = "MusicRecorder 自检";
-            updater.MusicProperties.AlbumTitle = "自检专辑";
-            updater.Update();
 
             // 响应系统媒体控制请求（模拟真实播放器：上一曲=重播当前歌曲）
             controls.ButtonPressed += (_, e) =>
@@ -408,17 +434,25 @@ public static class SelfTest
             var ended = new ManualResetEventSlim(false);
             player.MediaEnded += (_, _) => ended.Set();
             player.MediaFailed += (_, e) => { Console.WriteLine("播放失败：" + e.ErrorMessage); ended.Set(); };
+            playlist.CurrentItemChanged += (_, _) =>
+            {
+                try { Console.WriteLine($"  → 正在播放第 {playlist.CurrentItemIndex + 1} 首"); } catch { }
+            };
 
             player.Play();
-            Console.WriteLine($"模拟播放器已启动：{file}");
-            Console.WriteLine("（正在向系统注册媒体会话，标题来自文件 ID3 标签）");
+            Console.WriteLine($"模拟播放器已启动，共 {files.Count} 首：");
+            for (var i = 0; i < files.Count; i++)
+            {
+                var title = i < titles.Length ? titles[i] : Path.GetFileNameWithoutExtension(files[i]);
+                Console.WriteLine($"  [{i + 1}] {title}  ({Path.GetFileName(files[i])})");
+            }
+            Console.WriteLine("（正在向系统注册媒体会话，歌曲名来自 MediaPlaybackItem 显示属性）");
 
-            var deadline = DateTime.Now.AddSeconds(holdSeconds + 300);
-            var endAt = DateTime.Now.AddSeconds(holdSeconds);
-            while (!ended.IsSet && DateTime.Now < endAt && DateTime.Now < deadline) Thread.Sleep(200);
+            var deadline = DateTime.Now.AddMinutes(10);
+            while (!ended.IsSet && DateTime.Now < deadline) Thread.Sleep(200);
 
-            Console.WriteLine("媒体播放结束，保持会话 " + holdSeconds + " 秒以便观察…");
-            Thread.Sleep(holdSeconds * 1000);
+            Console.WriteLine($"播放结束，保持会话 {holdSeconds} 秒以便观察…");
+            Thread.Sleep(Math.Max(0, holdSeconds) * 1000);
             player.Pause();
             player.Dispose();
             Console.WriteLine("模拟播放器退出。");
@@ -600,6 +634,9 @@ public static class SelfTest
     {
         var media = new MediaSessionService();
         media.InitializeAsync().GetAwaiter().GetResult();
+        // 可选：--app=<媒体会话标识>，精确暂停某个播放器（自检时同时开着多个播放器很有用）
+        var app = GetString(args, "--app=");
+        if (!string.IsNullOrWhiteSpace(app)) media.PreferredAppId = app;
         var info = media.RefreshAsync(true).GetAwaiter().GetResult();
         Console.WriteLine("当前会话：" + (info?.ToString() ?? "未检测到"));
         var ok = media.PauseCurrentAsync().GetAwaiter().GetResult();

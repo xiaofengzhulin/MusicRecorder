@@ -79,8 +79,24 @@ public sealed class MediaSessionService
     public bool IsAvailable { get; private set; }
     public string? LastError { get; private set; }
 
-    /// <summary>用户指定的目标播放器（媒体会话标识）。为空表示自动挑选。</summary>
-    public string PreferredAppId { get; set; } = "";
+    /// <summary>
+    /// 用户指定的目标播放器（媒体会话标识）。为空表示自动挑选。
+    /// 改动后会让下一次刷新立即重新挑选会话——界面监控与「自动录制」都必须按用户选定的播放器来判断，
+    /// 否则会出现"用户选了 A，界面/自动录制却盯着 B"的问题。
+    /// </summary>
+    public string PreferredAppId
+    {
+        get => _preferredAppId;
+        set
+        {
+            var value2 = value ?? "";
+            if (string.Equals(_preferredAppId, value2, StringComparison.OrdinalIgnoreCase)) return;
+            _preferredAppId = value2;
+            _lastSessionRefresh = DateTime.MinValue;   // 下一次刷新立刻重新挑选
+        }
+    }
+
+    private string _preferredAppId = "";
 
     /// <summary>已发现的播放器会话（来源应用标识 -> 友好名称）。</summary>
     public List<(string AppId, string AppName, bool IsPlaying)> Sessions { get; } = new();

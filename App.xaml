@@ -58,14 +58,20 @@
                 <Setter Property="Padding" Value="9,7" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="TextBox">
+                            <!-- 注意：模板里绝不能再用 Padding/Margin 去套 TextBox.Padding。
+                                 PART_ContentHost 自己会消费 TextBox.Padding，重复套用会让
+                                 文本行高被算成「可用高度 − Padding」，只剩几 DIP，
+                                 文字被裁成一排小点（150% 缩放下必现）。 -->
                             <Border CornerRadius="6" Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}">
-                                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
-                                              VerticalAlignment="Center" />
+                                <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                              HorizontalScrollBarVisibility="Hidden"
+                                              VerticalScrollBarVisibility="Hidden" />
                             </Border>
                         </ControlTemplate>
                     </Setter.Value>

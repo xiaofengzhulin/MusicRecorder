@@ -16,8 +16,15 @@ public sealed class RecorderOptions
     /// <summary>指定要录制的播放器（媒体会话标识）；为空则自动选择。</summary>
     public string PreferredAppId { get; set; } = "";
 
-    /// <summary>录制结束后自动暂停播放（避免播放器继续播下一首）。</summary>
+    /// <summary>录制结束后自动暂停播放（避免播放器继续播下一首）。歌单连录时必须为 false。</summary>
     public bool PausePlaybackWhenDone { get; set; } = true;
+
+    /// <summary>
+    /// 即使看起来"已经在开头"也强制回到 0:00。
+    /// 「自动录制整张歌单」在换歌后紧接着开录，此时新歌已播放了一小段（位置判据会认为"已在开头"），
+    /// 必须强制重定位才能保证每首都从头录。
+    /// </summary>
+    public bool ForceRestart { get; set; }
 }
 
 public sealed record StartResult(bool Success, string? Error, string? FilePath, NowPlayingInfo? Info, string? Warning)
@@ -37,6 +44,20 @@ public sealed class RecordResult
     /// <summary>录制结束后是否成功暂停了播放器。</summary>
     public bool PlaybackPaused { get; set; }
 
+    /// <summary>
+    /// 结束原因是否属于「被手动暂停 / 中途被打断」。
+    /// Manual＝用户点了停止或关窗；PlaybackStopped＝播放器被暂停/停止；CaptureError＝采集流中断。
+    /// 歌曲正常放完（ReachedEnd / TrackChanged）不算打断。
+    /// </summary>
+    public bool IsInterrupted => Reason is StopReason.Manual or StopReason.PlaybackStopped or StopReason.CaptureError;
+
+    /// <summary>时长过短且是被打断结束的：导出前需要问用户一句「是否仍要导出」。</summary>
+    public bool NeedsExportConfirmation =>
+        Duration < RecorderEngine.ShortRecordingThreshold && IsInterrupted;
+
+    /// <summary>用户选择「不导出」，文件已被删除。</summary>
+    public bool Discarded { get; set; }
+
     public List<string> Warnings { get; } = new();
 }
 
@@ -48,6 +69,11 @@ public sealed class RecorderEngine : IDisposable
 {
     private static readonly TimeSpan MaxRecordDuration = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan EndTailGrace = TimeSpan.FromMilliseconds(700);
+
+    /// <summary>
+    /// 录制时长低于该值、且是被手动暂停/打断而结束时，界面会先问用户「是否仍要导出这段音频」。
+    /// </summary>
+    public static readonly TimeSpan ShortRecordingThreshold = TimeSpan.FromSeconds(10);
 
     private readonly MediaSessionService _media = new();
     private readonly AudioRecorder _recorder = new();
@@ -161,7 +187,7 @@ public sealed class RecorderEngine : IDisposable
             if (options.RestartFromStart)
             {
                 Status("正在把歌曲倒回开头…");
-                var (ok, message) = await RestartFromStartAsync(info);
+                var (ok, message) = await RestartFromStartAsync(info, options.ForceRestart);
                 Status(message);
                 if (!ok)
                 {
@@ -173,13 +199,18 @@ public sealed class RecorderEngine : IDisposable
                 if (after is not null && after.HasTrack) info = after;
             }
 
+            // 标题（用于 ID3 标签与界面）：纯歌曲名；读不到歌曲名时用时间戳
             var title = string.IsNullOrWhiteSpace(info.Title)
                 ? $"录音_{DateTime.Now:yyyyMMdd_HHmmss}"
                 : info.Title.Trim();
+            // 文件名：歌曲名-歌手（没有歌手信息时只用歌曲名）
+            var fileBase = string.IsNullOrWhiteSpace(info.Title)
+                ? title
+                : BuildFileBase(title, info.Artist);
             string path;
             try
             {
-                path = BuildOutputPath(options.OutputFolder, title);
+                path = BuildOutputPath(options.OutputFolder, fileBase);
             }
             catch (Exception ex)
             {
@@ -230,12 +261,12 @@ public sealed class RecorderEngine : IDisposable
     ///  · 这类播放器改用「下一曲 → 上一曲」：切走再切回，歌曲必然从 0:00 开始，
     ///    并用歌名变化来验证确实切回了同一首歌。
     /// </summary>
-    private async Task<(bool Ok, string Message)> RestartFromStartAsync(NowPlayingInfo info)
+    private async Task<(bool Ok, string Message)> RestartFromStartAsync(NowPlayingInfo info, bool force)
     {
         var timelineReliable = info.TimelineReliable;
 
-        // 0) 进度可信且已经在开头：无需处理
-        if (timelineReliable && info.Position <= TimeSpan.FromSeconds(1.5) && info.IsPlaying)
+        // 0) 进度可信且已经在开头：无需处理（force=true 时跳过——歌单连录用，避免漏掉新歌开头那一小段）
+        if (!force && timelineReliable && info.Position <= TimeSpan.FromSeconds(1.5) && info.IsPlaying)
             return (true, "歌曲已经在开头，直接开始录制。");
 
         // 1) 播放器声明支持定位时才用定位（QQ音乐声明 IsPlaybackPositionEnabled=False，
@@ -477,8 +508,9 @@ public sealed class RecorderEngine : IDisposable
         {
             result.Warnings.Add("没有生成录音文件，请检查磁盘空间与导出目录权限。");
         }
-        else if (recorded < TimeSpan.FromSeconds(3))
+        else if (recorded < TimeSpan.FromSeconds(3) && !result.NeedsExportConfirmation)
         {
+            // 若属于「时长过短 + 被打断」，界面会弹窗问用户是否导出，这里不再重复提示
             result.Warnings.Add("录制时长过短，可能是歌曲刚开始就结束了，请确认播放器状态。");
         }
 
@@ -508,6 +540,18 @@ public sealed class RecorderEngine : IDisposable
     }
 
     // ------------------------------------------------------------------ 工具
+
+    /// <summary>
+    /// 导出文件名主体：<c>歌曲名-歌手</c>（没有歌手信息时只用歌曲名）。
+    /// 只影响文件名，ID3 标签里的标题仍是纯歌曲名、歌手单独写在 Artist 标签里。
+    /// </summary>
+    public static string BuildFileBase(string title, string artist)
+    {
+        var t = (title ?? "").Trim();
+        var a = (artist ?? "").Trim();
+        if (t.Length == 0) return a;
+        return a.Length == 0 ? t : $"{t}-{a}";
+    }
 
     public static string BuildOutputPath(string folder, string title)
     {
