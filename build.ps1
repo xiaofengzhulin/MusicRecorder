@@ -4,8 +4,10 @@
 #   pwsh -File build.ps1              # 构建（Release，框架依赖）
 #   pwsh -File build.ps1 -Publish     # 发布单文件绿色版到 dist\
 #   pwsh -File build.ps1 -Package     # 发布并打包成可分发 zip 到 release\
+#   pwsh -File build.ps1 -Package -RuntimeIdentifier win-x86   # 32 位版本
 #
-# 说明：发布为 win-x64 自包含单文件，目标机器无需安装 .NET 运行时。
+# 说明：发布为自包含单文件（默认 win-x64），目标机器无需安装 .NET 运行时。
+#       -RuntimeIdentifier 支持 win-x64 / win-x86。
 
 param(
     [switch]$Publish,

@@ -178,9 +178,12 @@ dotnet build MusicRecorder.csproj -c Release
 pwsh -File build.ps1            # 构建
 pwsh -File build.ps1 -Publish   # 发布单文件绿色版到 dist\
 pwsh -File build.ps1 -Package   # 发布并打包成可分发 zip 到 release\
+
+# 32 位（x86）版本：加 -RuntimeIdentifier win-x86
+pwsh -File build.ps1 -Package -RuntimeIdentifier win-x86
 ```
 
-等价的手工发布命令：
+等价的手工发布命令（`-r` 换成 `win-x86` 即为 32 位版本）：
 
 ```powershell
 dotnet publish MusicRecorder.csproj -c Release -r win-x64 --self-contained true `

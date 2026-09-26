@@ -51,6 +51,16 @@
   并给 `PART_ContentHost` 补上标准的 `Focusable="False"` 与滚动条隐藏设置。
   已在 150% 缩放（144 DPI）下用最小复现探针确认根因并验证修复（修复后 viewport/文本高度均为 18 DIP，文字完整显示）。
 
+### 构建
+
+- **新增 32 位（x86）发布包**：`build.ps1` 支持 `-RuntimeIdentifier win-x86`（默认仍为 win-x64），
+  `MusicRecorder.csproj` 的 `<Platforms>` 由 `x64` 改为 `x64;x86`。32 位包
+  `MusicRecorder-v1.1.0-win-x86.zip`（单文件 64.6 MB）已随本版本发布提供，PE 头为 `0x014C`；
+  包内 `--selftest` 实测 `进程: x86`，SMTC / 设备检查、WASAPI 环回录制、LAME 编码与 MP3 解码校验全部通过。
+- **修复 `build.ps1` 中文乱码导致脚本无法执行**：脚本原为无 BOM 的 UTF-8，在 Windows PowerShell 5.1
+  （按 ANSI/GBK 解码）下中文字符串被拆断，报 `UnexpectedToken` 解析错误；已补 UTF-8 BOM，
+  PowerShell 7 与 Windows PowerShell 5.1 均可正常执行。
+
 ## [1.0.0] - 2026-09-23
 
 首个可用版本：在 Windows 上自动识别音乐软件正在播放的歌曲，从头播放并内录系统声音，结束后按歌曲名导出 MP3。
