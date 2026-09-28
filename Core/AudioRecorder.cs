@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
 using NAudio.Lame;
 using NAudio.MediaFoundation;
@@ -289,18 +290,48 @@ public sealed class AudioRecorder : IDisposable
 
     private IAudioSink CreateSink(string outputPath, WaveFormat format, int bitrate, TrackTags tags)
     {
+        // LameMP3FileWriter 构造时会先以 FileShare.None 创建输出文件，再初始化 LAME 原生库；
+        // 库不可加载（如 win-arm64 包内没有对应架构的 libmp3lame）时构造函数抛出会泄漏已打开的
+        // 文件句柄，一直锁到进程退出，导致 WavFallbackSink.Complete() 里 Media Foundation 转码
+        // 打不开同一文件（0x80070020 文件被占用）而退回 WAV、留下 0 字节的 .mp3 残留。
+        // 因此先探测原生库能否加载，可加载才尝试 LameSink。
+        if (LameNativeAvailable())
+        {
+            try
+            {
+                var sink = new LameSink(outputPath, format, bitrate, tags);
+                EncoderName = "LAME 3.100（直接编码 MP3，含 ID3 标签）";
+                return sink;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"LAME 编码器初始化失败（{ex.GetType().Name}: {ex.Message}），改用 MediaFoundation（先录 WAV 再转 MP3）");
+                // 兜底：构造中途失败仍可能泄漏对 outputPath 的句柄，强制 GC 触发终结器将其释放
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
+        }
+        else
+        {
+            Log.Warn($"LAME 原生库不可用（{LameLibraryName} 加载失败），改用 MediaFoundation（先录 WAV 再转 MP3）");
+        }
+
+        EncoderName = "Windows Media Foundation（先录 WAV 再转 MP3）";
+        return new WavFallbackSink(outputPath, format, bitrate, tags);
+    }
+
+    /// <summary>LAME 原生库名，与 NAudio.Lame 按进程位数选择的库名保持一致。</summary>
+    private static string LameLibraryName => IntPtr.Size == 8 ? "libmp3lame.64.dll" : "libmp3lame.32.dll";
+
+    /// <summary>探测 LAME 原生库能否加载；不可加载则不触碰输出文件，直接走 Media Foundation 降级。</summary>
+    private static bool LameNativeAvailable()
+    {
         try
         {
-            var sink = new LameSink(outputPath, format, bitrate, tags);
-            EncoderName = "LAME 3.100（直接编码 MP3，含 ID3 标签）";
-            return sink;
+            return NativeLibrary.TryLoad(LameLibraryName, typeof(LameMP3FileWriter).Assembly, null, out _);
         }
-        catch (Exception ex)
-        {
-            Log.Warn($"LAME 编码器不可用（{ex.GetType().Name}: {ex.Message}），改用 MediaFoundation（先录 WAV 再转 MP3）");
-            EncoderName = "Windows Media Foundation（先录 WAV 再转 MP3）";
-            return new WavFallbackSink(outputPath, format, bitrate, tags);
-        }
+        catch { return false; }
     }
 
     // ------------------------------------------------------------------ 编码目标

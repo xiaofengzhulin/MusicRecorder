@@ -51,6 +51,31 @@
   并给 `PART_ContentHost` 补上标准的 `Focusable="False"` 与滚动条隐藏设置。
   已在 150% 缩放（144 DPI）下用最小复现探针确认根因并验证修复（修复后 viewport/文本高度均为 18 DIP，文字完整显示）。
 
+## [1.1.2] - 2026-09-28
+
+### 修复
+
+- **修复「LAME 不可用时 Media Foundation 转码必然失败」的文件句柄泄漏 bug**（小米平板 5 / WOA 真机实测发现；
+  x64/x86 的降级路径同样存在，只是此前 LAME 一直加载成功未暴露）：
+  `LameMP3FileWriter` 构造时会先以 `FileShare.None` 创建输出文件、再初始化 LAME 原生库；库加载失败抛出时
+  已打开的文件句柄无人释放，一直锁到进程退出，导致 `WavFallbackSink.Complete()` 里的
+  `MediaFoundationEncoder.EncodeToMp3` 打不开同一文件报 `0x80070020（文件被占用）`，
+  最终只留下 WAV、`.mp3` 只剩 0 字节残留。
+  现改为：先用 `NativeLibrary.TryLoad` 探测 LAME 原生库能否加载，可加载才构造 `LameSink`；
+  构造失败的兜底 catch 中强制 `GC.Collect + WaitForPendingFinalizers()` 释放可能泄漏的句柄。
+  修复后自检路径在 LAME 不可用时也能正常产出带 ID3 的 MP3。
+
+### 新增
+
+- **支持发布 win-arm64（Windows on ARM）**：`<Platforms>` 增加 `arm64`，`dotnet publish -r win-arm64`
+  可产出自包含单文件绿色版。真机（小米平板 5 / 骁龙 860 / WOA）实测：原生 ARM64 运行（`进程: arm64`）、
+  WASAPI 环回录制、SMTC 歌曲识别、倒回兜底、端到端导出全部正常。
+- `--selftest` 架构行改用 `RuntimeInformation.ProcessArchitecture`，ARM64 下如实报告 `arm64`（不再误报 x64）。
+
+### 变更
+
+- `使用说明.txt` / README 运行环境：系统要求增加 ARM64。
+
 ## [1.1.1] - 2026-09-27
 
 ### 新增
