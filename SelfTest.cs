@@ -55,7 +55,7 @@ public static class SelfTest
         try
         {
             Line($"=== MusicRecorder 自检（{mode}）{DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-            Line($"系统: {Environment.OSVersion}｜.NET: {Environment.Version}｜进程: {(Environment.Is64BitProcess ? "x64" : "x86")}");
+            Line($"系统: {Environment.OSVersion}｜.NET: {Environment.Version}｜进程: {RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}");
             Line("");
 
             exit |= CheckMediaSession(Line);
