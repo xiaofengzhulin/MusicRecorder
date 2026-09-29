@@ -517,7 +517,12 @@ public sealed class RecorderEngine : IDisposable
         CurrentFilePath = path ?? "";
         SetState(RecorderState.Idle);
 
-        var saved = string.IsNullOrEmpty(path) ? "录制结束，但没有生成文件。" : $"已保存：{Path.GetFileName(path)}";
+        // 过短且需确认的录音：先不宣布「已保存」，由界面弹窗确认后再决定去留（避免"先保存后询问"）
+        var saved = string.IsNullOrEmpty(path)
+            ? "录制结束，但没有生成文件。"
+            : result.NeedsExportConfirmation
+                ? $"已录制，等待确认是否导出：{Path.GetFileName(path)}"
+                : $"已保存：{Path.GetFileName(path)}";
         if (playbackPaused) saved += "，播放已暂停。";
         Status(saved);
         return result;

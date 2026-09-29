@@ -15,7 +15,7 @@
     <Platforms>x64;x86;arm64</Platforms>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <Version>1.1.2</Version>
+    <Version>1.1.3</Version>
     <Product>MusicRecorder</Product>
     <AssemblyTitle>MusicRecorder - 音乐播放器内录工具</AssemblyTitle>
     <Company>MusicRecorder</Company>
@@ -23,9 +23,23 @@
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- win-arm64：NAudio.Lame 的 build 资产只带 x86/x64 原生库（会把 x64 版 libmp3lame.64.dll
+         复制进输出，ARM64 进程加载时架构不匹配），排除掉，改用 native\win-arm64\ 下的 ARM64 原生 LAME -->
+    <LameBuildAssets Condition="'$(RuntimeIdentifier)' == 'win-arm64'">build</LameBuildAssets>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="NAudio.Lame" Version="2.1.0" />
+    <PackageReference Include="NAudio.Lame" Version="2.1.0" ExcludeAssets="$(LameBuildAssets)" />
+  </ItemGroup>
+
+  <!-- ARM64 原生 LAME 3.100（MSYS2 clangarm64 构建，LGPL）：NAudio.Lame 按位数加载 libmp3lame.64.dll -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-arm64'">
+    <None Include="native\win-arm64\libmp3lame.64.dll">
+      <Link>libmp3lame.64.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,15 @@
+LAME MP3 编码库（libmp3lame）许可说明
+=====================================
+
+本软件（MusicRecorder）使用 LAME MP3 编码库，来源如下：
+
+- win-arm64 包：mingw-w64-clang-aarch64-lame 3.100-3（MSYS2 clangarm64 环境构建的 ARM64 版，
+  位于仓库 native\win-arm64\libmp3lame.64.dll），仓库下载：https://repo.msys2.org/mingw/clangarm64/
+- win-x64 / win-x86 包：NAudio.Lame 2.1.0 NuGet 包内附带的 libmp3lame（x86/x64 版）
+
+LAME 许可：GNU Lesser General Public License（LGPL）v2.1 或后续版本
+项目主页：https://lame.sourceforge.io/
+源码下载：https://sourceforge.net/projects/lame/files/lame/3.100/
+
+本软件以动态链接方式使用 libmp3lame（运行时加载 libmp3lame.32.dll / libmp3lame.64.dll），
+未对 LAME 源码作任何修改。如需获取 LAME 源码，可从上述地址下载 lame-3.100.tar.gz。

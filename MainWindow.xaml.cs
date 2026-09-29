@@ -485,6 +485,11 @@ public partial class MainWindow : Window
 
         var hasFile = !string.IsNullOrEmpty(result.FilePath) && File.Exists(result.FilePath);
 
+        // 记录过短确认的判定依据，便于诊断"弹窗时机不一致"类问题（N1）
+        Log.Info($"录制完成：原因={result.Reason}，时长={result.Duration:mm\\:ss\\.ff}，" +
+                 $"过短阈值={RecorderEngine.ShortRecordingThreshold.TotalSeconds}s，IsInterrupted={result.IsInterrupted}，" +
+                 $"NeedsExportConfirmation={result.NeedsExportConfirmation}");
+
         // 时长过短 + 被手动暂停/打断：先问一句是否仍要导出，选「否」直接删掉录音文件
         if (hasFile && result.NeedsExportConfirmation && !ConfirmShortRecording(result))
         {

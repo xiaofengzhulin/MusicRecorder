@@ -1,4 +1,4 @@
-﻿# MusicRecorder 构建 / 发布 / 打包脚本
+# MusicRecorder 构建 / 发布 / 打包脚本
 #
 # 用法：
 #   pwsh -File build.ps1              # 构建（Release，框架依赖）
@@ -74,7 +74,7 @@ if (Test-Path $zip) { Remove-Item $zip -Force }
 New-Item -ItemType Directory -Path $pkgDir -Force | Out-Null
 
 Copy-Item $exe (Join-Path $pkgDir 'MusicRecorder.exe')
-foreach ($extra in '使用说明.txt', 'README.md', 'CHANGELOG.md') {
+foreach ($extra in '使用说明.txt', 'README.md', 'CHANGELOG.md', 'LAME-NOTICE.txt') {
     $src = Join-Path $root $extra
     if (Test-Path $src) { Copy-Item $src (Join-Path $pkgDir $extra) }
 }
