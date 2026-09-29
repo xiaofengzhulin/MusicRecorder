@@ -1,4 +1,4 @@
-# MusicRecorder 构建 / 发布 / 打包脚本
+﻿# MusicRecorder 构建 / 发布 / 打包脚本
 #
 # 用法：
 #   pwsh -File build.ps1              # 构建（Release，框架依赖）
