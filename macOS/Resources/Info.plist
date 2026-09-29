@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleDisplayName</key>
+    <string>MusicRecorder</string>
+    <key>CFBundleExecutable</key>
+    <string>MusicRecorder</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.xiaofengzhulin.MusicRecorder.mac</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>MusicRecorder</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.2.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>120</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>MusicRecorder 需要读取和控制支持自动化的音乐播放器，以获取歌曲信息、回到开头并在录制完成后暂停。</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>MusicRecorder 需要“屏幕与系统音频录制”权限来捕获 Mac 正在播放的系统声音；应用不会保存画面。</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>MusicRecorder contributors</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>

@@ -1,6 +1,7 @@
 # 构建输出
 [Bb]in/
 [Oo]bj/
+.build/
 dist/
 release/
 
