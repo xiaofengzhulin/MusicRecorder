@@ -1,8 +1,12 @@
 # 更新日志
 
+本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+
 ## [1.2.0] - 2026-09-29
 
-- 新增原生 macOS SwiftUI 客户端，支持 M1/M2/M3/M4（arm64）和 macOS 13 及以上版本。
+### 新增
+
+- **原生 macOS 客户端**（Apple Silicon）：新增 `macOS/` SwiftUI 客户端，支持 M1/M2/M3/M4（arm64）和 macOS 13 及以上版本。
 - 使用 ScreenCaptureKit 捕获系统音频，以系统 AAC 编码器导出 M4A，支持歌曲名/歌手命名、重名编号与音频标签。
 - 新增“系统正在播放”通用来源：自动读取 macOS 控制中心当前媒体，覆盖支持系统媒体会话的 QQ 音乐、Safari、Chrome、Edge、Firefox 及其他第三方播放器。
 - “自动识别”优先使用通用系统媒体来源，Apple Music、Spotify 和网易云音乐专用读取作为兼容兜底。
@@ -13,7 +17,11 @@
 - 系统媒体进度改用动态计算位置，并补充真实播放/暂停状态读取。
 - 新增文件名、网易云记录解析和自动录制策略测试；Windows 原有功能保持不变。
 
-本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+### 变更
+
+- Windows 包版本号同步升至 1.2.0（功能与 1.1.3 完全一致），`win-x64` / `win-x86` / `win-arm64`
+  三架构附件与 macOS 版同版本发布。
+- 感谢 [@ameatrema](https://github.com/ameatrema) 贡献原生 macOS 客户端（PR #1）。
 
 ## [1.1.3] - 2026-09-29
 
