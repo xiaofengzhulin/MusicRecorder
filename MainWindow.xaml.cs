@@ -24,6 +24,8 @@ public partial class MainWindow : Window
 
     private static readonly Brush AccentBrush = new SolidColorBrush(Color.FromRgb(0x2F, 0x7D, 0xF6));
     private static readonly Brush DangerBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0x3B, 0x3B));
+    private static readonly Brush Panel2Brush = new SolidColorBrush(Color.FromRgb(0x23, 0x27, 0x2F));
+    private static readonly Brush LineEdgeBrush = new SolidColorBrush(Color.FromRgb(0x31, 0x36, 0x3F));
 
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly RecorderEngine _engine = new();
@@ -98,8 +100,8 @@ public partial class MainWindow : Window
         SetStatus("正在初始化系统媒体会话…");
         await _engine.InitializeAsync();
         SetStatus(_engine.Media.IsAvailable
-            ? "就绪：在播放器中播放任意歌曲，然后点击下方“开始录制”。"
-            : (_engine.Media.LastError ?? "系统媒体会话不可用。"));
+            ? "就绪：播放歌曲后点「开始录制」，或点「手动录制」不依赖播放器直接开录。"
+            : (_engine.Media.LastError ?? "系统媒体会话不可用。") + "（自动功能不可用，「手动录制」仍可直接录音）");
 
         UpdateUiState();
         _timer.Tick += Timer_Tick;
@@ -251,16 +253,19 @@ public partial class MainWindow : Window
         UpdateUiState();
     }
 
-    /// <summary>歌单连录时必须连续播放，所以「结束后自动暂停播放」在该模式下不生效（置灰）。</summary>
+    /// <summary>歌单连录时必须连续播放，所以「结束后自动暂停播放」在该模式下不生效（置灰）；手动录制模式下该选项同样无效。</summary>
     private void UpdatePlaylistUiState()
     {
         var playlist = PlaylistCheck.IsChecked == true;
         var busy = _engine.State is RecorderState.Preparing or RecorderState.Finishing;
+        var manual = _engine.IsRecording && _engine.ManualMode;   // 手动录制进行中
         PauseCheck.IsEnabled = !playlist && !_engine.IsRecording && !busy;
-        PauseCheck.Opacity = playlist ? 0.45 : 1.0;
-        PauseCheck.ToolTip = playlist
-            ? "歌单连录需要连续播放，每首录完不会暂停播放器，因此该项在当前模式下不生效。"
-            : "录制结束后自动暂停播放器，避免继续播下一首（歌单连录时该项不生效）。";
+        PauseCheck.Opacity = playlist || manual ? 0.45 : 1.0;
+        PauseCheck.ToolTip = manual
+            ? "手动录制模式下不生效（不操作播放器，停止时不会暂停播放）。"
+            : playlist
+                ? "歌单连录需要连续播放，每首录完不会暂停播放器，因此该项在当前模式下不生效。"
+                : "录制结束后自动暂停播放器，避免继续播下一首（歌单连录时该项不生效）。";
     }
 
     private void UpdateNowPlayingUi(NowPlayingInfo? info)
@@ -376,29 +381,57 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 真正开始录制。手动点「开始录制」与两种自动录制模式共用这一条路径。
+    /// 「手动录制」开关：点击立即开始录制系统声音，再次点击停止并保存。
+    /// 不依赖播放器会话（没开播放器也能录），「② 录制选项」在该模式下整组不生效；
+    /// 何时停止完全由用户点击决定（换歌 / 暂停 / 曲末 / 20 分钟超长等自动停止判据均不适用）。
+    /// </summary>
+    private async void ManualRecordButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_engine.IsRecording)
+        {
+            if (!_engine.ManualMode) return;   // 普通录制中该按钮是禁用的，这里只是双保险
+
+            ManualRecordButton.IsEnabled = false;
+            RecordResult? result = null;
+            try { result = await _engine.StopAsync(StopReason.Manual); }
+            catch (Exception ex) { Log.Error("手动录制停止失败", ex); }
+            ManualRecordButton.IsEnabled = true;
+            if (result is not null) HandleFinished(result);
+            UpdateUiState();
+            return;
+        }
+
+        await StartRecordingAsync(auto: false, manual: true);
+    }
+
+    /// <summary>
+    /// 真正开始录制。手动点「开始录制」、点「手动录制」与两种自动录制模式共用这一条路径。
     /// auto=true 时不弹窗（用户可能只是按了播放，不该被对话框打断），失败只写状态栏与日志。
     /// forceRestart=true 用于歌单连录的换歌触发：强制把新歌倒回 0:00。
+    /// manual=true 为「手动录制」模式：不依赖播放器、不倒回、不暂停播放器、忽略「录制选项」。
     /// </summary>
-    private async Task<bool> StartRecordingAsync(bool auto, bool forceRestart = false)
+    private async Task<bool> StartRecordingAsync(bool auto, bool forceRestart = false, bool manual = false)
     {
         if (_engine.State is RecorderState.Recording or RecorderState.Preparing) return false;
 
         SaveSettingsFromUi();
-        var playlist = PlaylistCheck.IsChecked == true;
+        var playlist = !manual && PlaylistCheck.IsChecked == true;
         var options = new RecorderOptions
         {
             OutputFolder = _settings.OutputFolder,
             Bitrate = _settings.Bitrate,
             DeviceIndex = _settings.CaptureDeviceNumber,
-            RestartFromStart = RestartCheck.IsChecked == true,
+            // 手动录制：直接从当前位置开始录系统声音，不倒回、结束后也不暂停（「录制选项」在该模式下不生效）
+            RestartFromStart = manual ? false : RestartCheck.IsChecked == true,
             ForceRestart = forceRestart,
             PreferredAppId = _settings.PreferredPlayerAppId,
             // 歌单连录必须让播放器连续播放，否则每首录完就暂停、无法接着录下一首
-            PausePlaybackWhenDone = PauseCheck.IsChecked == true && !playlist,
+            PausePlaybackWhenDone = !manual && PauseCheck.IsChecked == true && !playlist,
+            Manual = manual,
         };
 
         RecordButton.IsEnabled = false;
+        ManualRecordButton.IsEnabled = false;
         StartResult start;
         try
         {
@@ -406,10 +439,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Log.Error("开始录制异常", ex);
+            Log.Error(manual ? "开始手动录制异常" : "开始录制异常", ex);
             start = StartResult.Fail($"开始录制失败：{ex.Message}");
         }
         RecordButton.IsEnabled = true;
+        ManualRecordButton.IsEnabled = true;
 
         if (!start.Success)
         {
@@ -488,7 +522,7 @@ public partial class MainWindow : Window
         // 记录过短确认的判定依据，便于诊断"弹窗时机不一致"类问题（N1）
         Log.Info($"录制完成：原因={result.Reason}，时长={result.Duration:mm\\:ss\\.ff}，" +
                  $"过短阈值={RecorderEngine.ShortRecordingThreshold.TotalSeconds}s，IsInterrupted={result.IsInterrupted}，" +
-                 $"NeedsExportConfirmation={result.NeedsExportConfirmation}");
+                 $"NeedsExportConfirmation={result.NeedsExportConfirmation}，手动录制={result.Manual}");
 
         // 时长过短 + 被手动暂停/打断：先问一句是否仍要导出，选「否」直接删掉录音文件
         if (hasFile && result.NeedsExportConfirmation && !ConfirmShortRecording(result))
@@ -502,9 +536,11 @@ public partial class MainWindow : Window
         {
             LastFileText.Text = $"上次导出：{result.FilePath}";
             var extra = result.Warnings.Count > 0 ? "（" + string.Join("；", result.Warnings) + "）" : "";
-            SetStatus($"已导出：{Path.GetFileName(result.FilePath)}｜时长 {FormatTime(result.Duration)}{extra}");
+            var modeTag = result.Manual ? "（手动录制）" : "";
+            SetStatus($"已导出：{Path.GetFileName(result.FilePath)}{modeTag}｜时长 {FormatTime(result.Duration)}{extra}");
 
-            if (OpenFolderCheck.IsChecked == true)
+            // 手动录制模式下「完成后打开文件夹」不生效
+            if (OpenFolderCheck.IsChecked == true && !result.Manual)
             {
                 try
                 {
@@ -583,10 +619,17 @@ public partial class MainWindow : Window
     {
         var recording = _engine.IsRecording;
         var busy = _engine.State is RecorderState.Preparing or RecorderState.Finishing;
+        var manualActive = recording && _engine.ManualMode;   // 手动录制进行中
 
-        RecordButton.Content = recording ? "■  停止并保存" : "●  开始录制";
-        RecordButton.Background = recording ? DangerBrush : AccentBrush;
-        RecordButton.IsEnabled = !busy;
+        // 普通录制用「开始录制」按钮停止；手动录制只能用「手动录制」按钮停止（互相置灰，避免语义混乱）
+        RecordButton.Content = recording && !manualActive ? "■  停止并保存" : "●  开始录制";
+        RecordButton.Background = recording && !manualActive ? DangerBrush : AccentBrush;
+        RecordButton.IsEnabled = !busy && !manualActive;
+
+        ManualRecordButton.Content = manualActive ? "■  停止录制" : "●  手动录制";
+        ManualRecordButton.Background = manualActive ? DangerBrush : Panel2Brush;
+        ManualRecordButton.BorderBrush = manualActive ? DangerBrush : LineEdgeBrush;
+        ManualRecordButton.IsEnabled = !busy && !(recording && !manualActive);
 
         DeviceCombo.IsEnabled = !recording && !busy;
         PlayerCombo.IsEnabled = !recording && !busy;
@@ -594,7 +637,17 @@ public partial class MainWindow : Window
         OutputFolderBox.IsEnabled = !recording && !busy;
         RestartCheck.IsEnabled = !recording && !busy;
         BrowseButton.IsEnabled = !recording && !busy;
-        UpdatePlaylistUiState();   // 内含 PauseCheck 的可用性（歌单连录时置灰）
+
+        // 手动录制模式下「② 录制选项」整组不生效：置灰压暗（自动录制/歌单连录在录制中本就不会触发）
+        AutoRecordCheck.IsEnabled = !manualActive;
+        PlaylistCheck.IsEnabled = !manualActive;
+        OpenFolderCheck.IsEnabled = !manualActive;
+        var optionOpacity = manualActive ? 0.45 : 1.0;
+        AutoRecordCheck.Opacity = optionOpacity;
+        PlaylistCheck.Opacity = optionOpacity;
+        OpenFolderCheck.Opacity = optionOpacity;
+
+        UpdatePlaylistUiState();   // 内含 PauseCheck 的可用性（歌单连录/手动录制时置灰）
 
         RecordStateText.Text = _engine.State switch
         {

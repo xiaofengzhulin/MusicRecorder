@@ -25,6 +25,12 @@ public sealed class RecorderOptions
     /// 必须强制重定位才能保证每首都从头录。
     /// </summary>
     public bool ForceRestart { get; set; }
+
+    /// <summary>
+    /// 「手动录制」模式：点击即直接录制系统声音——不依赖播放器会话（读得到歌曲名就用歌曲名命名，
+    /// 读不到就用时间戳），不倒回进度、结束后不暂停播放器，且「录制选项」在该模式下全部不生效。
+    /// </summary>
+    public bool Manual { get; set; }
 }
 
 public sealed record StartResult(bool Success, string? Error, string? FilePath, NowPlayingInfo? Info, string? Warning)
@@ -51,9 +57,13 @@ public sealed class RecordResult
     /// </summary>
     public bool IsInterrupted => Reason is StopReason.Manual or StopReason.PlaybackStopped or StopReason.CaptureError;
 
-    /// <summary>时长过短且是被打断结束的：导出前需要问用户一句「是否仍要导出」。</summary>
+    /// <summary>时长过短且是被打断结束的：导出前需要问用户一句「是否仍要导出」。
+    /// 手动录制的开始与停止都是用户主动操作，不存在"被打断"的歧义，不询问、直接保存。</summary>
     public bool NeedsExportConfirmation =>
-        Duration < RecorderEngine.ShortRecordingThreshold && IsInterrupted;
+        !Manual && Duration < RecorderEngine.ShortRecordingThreshold && IsInterrupted;
+
+    /// <summary>本次录制来自「手动录制」按钮（不依赖播放器、忽略「录制选项」的模式）。</summary>
+    public bool Manual { get; set; }
 
     /// <summary>用户选择「不导出」，文件已被删除。</summary>
     public bool Discarded { get; set; }
@@ -104,6 +114,9 @@ public sealed class RecorderEngine : IDisposable
     public bool IsRecording => State == RecorderState.Recording;
     public TimeSpan Elapsed => State == RecorderState.Recording ? DateTime.Now - _startedAt : TimeSpan.Zero;
 
+    /// <summary>当前是否处于「手动录制」模式（「手动录制」开录成功且尚未停止）。</summary>
+    public bool ManualMode { get; private set; }
+
     public event Action<string>? StatusChanged;
     public event Action? StateChanged;
     public event Action<NowPlayingInfo?>? InfoUpdated;
@@ -134,6 +147,7 @@ public sealed class RecorderEngine : IDisposable
         if (State is RecorderState.Recording or RecorderState.Preparing)
             return StartResult.Fail("当前正在录制中。");
 
+        var manual = options.Manual;
         SetState(RecorderState.Preparing);
         _warnings.Clear();
         _notPlayingTicks = 0;
@@ -142,69 +156,86 @@ public sealed class RecorderEngine : IDisposable
         try
         {
             _media.PreferredAppId = options.PreferredAppId ?? "";
-            _pauseWhenDone = options.PausePlaybackWhenDone;
+            // 手动录制不操作播放器：不倒回进度、结束后也不暂停（「录制选项」在该模式下不生效）
+            _pauseWhenDone = !manual && options.PausePlaybackWhenDone;
 
-            if (!_media.IsAvailable)
+            NowPlayingInfo? info = null;
+            string? restartWarning = null;
+
+            if (manual)
             {
-                Status("正在连接 Windows 媒体会话…");
-                await _media.InitializeAsync();
+                // 手动录制：播放器会话只用来"顺带"取歌曲名（取到就用歌曲名命名，取不到用时间戳），
+                // 会话不可用 / 读取失败都不影响开录——该模式完全不依赖播放器
+                if (_media.IsAvailable)
+                {
+                    try { info = await _media.RefreshAsync(); }
+                    catch (Exception ex) { Log.Warn($"手动录制：读取媒体信息失败（{ex.Message}），改用时间戳命名"); }
+                }
+                if (info is not null && !info.HasTrack) info = null;
             }
-
-            if (!_media.IsAvailable)
+            else
             {
-                SetState(RecorderState.Idle);
-                return StartResult.Fail(_media.LastError ?? "无法访问 Windows 系统媒体会话，请确认系统版本为 Windows 10 2004 或更高。");
-            }
+                if (!_media.IsAvailable)
+                {
+                    Status("正在连接 Windows 媒体会话…");
+                    await _media.InitializeAsync();
+                }
 
-            Status("正在检测正在播放的歌曲…");
-            var info = await _media.RefreshAsync(forceSessionRescan: true);
-            if (info is null)
-            {
-                SetState(RecorderState.Idle);
-                return StartResult.Fail("没有检测到任何正在运行的播放器会话。\r\n请先打开 QQ音乐 / 网易云音乐 / 酷狗音乐 任意一款并播放歌曲，再点击“开始录制”。");
-            }
-
-            if (!info.HasTrack)
-            {
-                if (info.PlaybackStatus != "Playing" && info.PlaybackStatus != "Paused")
+                if (!_media.IsAvailable)
                 {
                     SetState(RecorderState.Idle);
-                    return StartResult.Fail("检测到播放器，但当前没有歌曲在播放。\r\n请在播放器中播放歌曲后再点击“开始录制”。");
+                    return StartResult.Fail(_media.LastError ?? "无法访问 Windows 系统媒体会话，请确认系统版本为 Windows 10 2004 或更高。");
                 }
 
-                // 播放器没有提供歌曲名（少数播放器/网页播放器会这样）：仍然录制，用时间戳命名
-                const string noTitle = "未能从播放器读取歌曲名（该播放器未开放媒体信息），将以录制时间命名文件。";
-                _warnings.Add(noTitle);
-                Log.Warn(noTitle);
-            }
-
-            Status(info.HasTrack
-                ? $"检测到：{info.DisplayName}（{info.SourceAppName}）"
-                : $"检测到播放器：{info.SourceAppName}（未提供歌曲名）");
-            await _media.EnsurePlayingAsync();
-
-            string? restartWarning = null;
-            if (options.RestartFromStart)
-            {
-                Status("正在把歌曲倒回开头…");
-                var (ok, message) = await RestartFromStartAsync(info, options.ForceRestart);
-                Status(message);
-                if (!ok)
+                Status("正在检测正在播放的歌曲…");
+                info = await _media.RefreshAsync(forceSessionRescan: true);
+                if (info is null)
                 {
-                    restartWarning = message;
-                    _warnings.Add(message);
+                    SetState(RecorderState.Idle);
+                    return StartResult.Fail("没有检测到任何正在运行的播放器会话。\r\n请先打开 QQ音乐 / 网易云音乐 / 酷狗音乐 任意一款并播放歌曲，再点击“开始录制”。");
                 }
 
-                var after = await _media.RefreshAsync();
-                if (after is not null && after.HasTrack) info = after;
+                if (!info.HasTrack)
+                {
+                    if (info.PlaybackStatus != "Playing" && info.PlaybackStatus != "Paused")
+                    {
+                        SetState(RecorderState.Idle);
+                        return StartResult.Fail("检测到播放器，但当前没有歌曲在播放。\r\n请在播放器中播放歌曲后再点击“开始录制”。");
+                    }
+
+                    // 播放器没有提供歌曲名（少数播放器/网页播放器会这样）：仍然录制，用时间戳命名
+                    const string noTitle = "未能从播放器读取歌曲名（该播放器未开放媒体信息），将以录制时间命名文件。";
+                    _warnings.Add(noTitle);
+                    Log.Warn(noTitle);
+                }
+
+                Status(info.HasTrack
+                    ? $"检测到：{info.DisplayName}（{info.SourceAppName}）"
+                    : $"检测到播放器：{info.SourceAppName}（未提供歌曲名）");
+                await _media.EnsurePlayingAsync();
+
+                if (options.RestartFromStart)
+                {
+                    Status("正在把歌曲倒回开头…");
+                    var (ok, message) = await RestartFromStartAsync(info, options.ForceRestart);
+                    Status(message);
+                    if (!ok)
+                    {
+                        restartWarning = message;
+                        _warnings.Add(message);
+                    }
+
+                    var after = await _media.RefreshAsync();
+                    if (after is not null && after.HasTrack) info = after;
+                }
             }
 
             // 标题（用于 ID3 标签与界面）：纯歌曲名；读不到歌曲名时用时间戳
-            var title = string.IsNullOrWhiteSpace(info.Title)
+            var title = info is null || string.IsNullOrWhiteSpace(info.Title)
                 ? $"录音_{DateTime.Now:yyyyMMdd_HHmmss}"
                 : info.Title.Trim();
             // 文件名：歌曲名-歌手（没有歌手信息时只用歌曲名）
-            var fileBase = string.IsNullOrWhiteSpace(info.Title)
+            var fileBase = info is null || string.IsNullOrWhiteSpace(info.Title)
                 ? title
                 : BuildFileBase(title, info.Artist);
             string path;
@@ -218,9 +249,9 @@ public sealed class RecorderEngine : IDisposable
                 return StartResult.Fail($"导出目录不可用：{ex.Message}");
             }
 
-            var tags = new TrackTags { Title = title, Artist = info.Artist, Album = info.Album };
+            var tags = new TrackTags { Title = title, Artist = info?.Artist ?? "", Album = info?.Album ?? "" };
 
-            Status("正在启动系统内录…");
+            Status(manual ? "手动录制：正在启动系统内录…" : "正在启动系统内录…");
             try
             {
                 _recorder.Start(options.DeviceIndex, path, options.Bitrate, tags);
@@ -233,21 +264,30 @@ public sealed class RecorderEngine : IDisposable
             }
 
             _startedAt = DateTime.Now;
-            _baselineKey = info.HasTrack ? info.TrackKey : "";
-            _hasTrackBaseline = info.HasTrack;
+            _hasTrackBaseline = info is not null && info.HasTrack;
+            _baselineKey = info is not null && info.HasTrack ? info.TrackKey : "";
             _maxPosition = TimeSpan.Zero;
             _currentTitle = title;
-            _currentArtist = info.Artist;
-            _currentApp = info.SourceAppName;
+            _currentArtist = info?.Artist ?? "";
+            _currentApp = info?.SourceAppName ?? (manual ? "手动录制" : "");
             CurrentFilePath = path;
+            ManualMode = manual;
             SetState(RecorderState.Recording);
 
-            Status(info.HasTrack ? $"正在录制：{info.DisplayName}" : "正在录制（该播放器未提供歌曲名）");
-            return new StartResult(true, null, path, info, restartWarning);        }
+            Status(manual
+                ? info is not null
+                    ? $"手动录制中：{info.DisplayName}，再次点击「手动录制」停止并保存。"
+                    : "手动录制中：正在录制系统声音，再次点击「手动录制」停止并保存。"
+                : info is not null && info.HasTrack
+                    ? $"正在录制：{info.DisplayName}"
+                    : "正在录制（该播放器未提供歌曲名）");
+            return new StartResult(true, null, path, info, restartWarning);
+        }
         catch (Exception ex)
         {
-            Log.Error("开始录制异常", ex);
+            Log.Error(manual ? "开始手动录制异常" : "开始录制异常", ex);
             try { _recorder.Stop(); } catch { }
+            ManualMode = false;
             SetState(RecorderState.Idle);
             return StartResult.Fail($"开始录制失败：{ex.Message}");
         }
@@ -369,6 +409,11 @@ public sealed class RecorderEngine : IDisposable
                 return await StopAsync(StopReason.CaptureError);
             }
 
+            // 手动录制：不依赖播放器（可能根本没开播放器），换歌 / 暂停 / 曲末 / 进度回退 / 20 分钟超长
+            // 等自动停止判据一律不适用——何时结束完全由用户再次点击「手动录制」决定；
+            // 仅保留上面的采集流中断检测（那属于技术故障，必须保存退出）。
+            if (ManualMode) return null;
+
             if (info is null || !info.HasTrack)
             {
                 _noInfoTicks++;
@@ -439,6 +484,7 @@ public sealed class RecorderEngine : IDisposable
     public async Task<RecordResult?> StopAsync(StopReason reason)
     {
         if (State is not RecorderState.Recording) return null;
+        var manual = ManualMode;
         SetState(RecorderState.Finishing);
 
         Status(reason switch
@@ -490,6 +536,7 @@ public sealed class RecorderEngine : IDisposable
             SourceApp = _currentApp,
             Duration = recorded,
             Reason = reason,
+            Manual = manual,
         };
         result.Warnings.AddRange(_warnings);
 
@@ -511,11 +558,14 @@ public sealed class RecorderEngine : IDisposable
         else if (recorded < TimeSpan.FromSeconds(3) && !result.NeedsExportConfirmation)
         {
             // 若属于「时长过短 + 被打断」，界面会弹窗问用户是否导出，这里不再重复提示
-            result.Warnings.Add("录制时长过短，可能是歌曲刚开始就结束了，请确认播放器状态。");
+            result.Warnings.Add(manual
+                ? "录制时长不足 3 秒，请确认系统正在播放声音、录音设备选择正确。"
+                : "录制时长过短，可能是歌曲刚开始就结束了，请确认播放器状态。");
         }
 
         CurrentFilePath = path ?? "";
         SetState(RecorderState.Idle);
+        ManualMode = false;
 
         // 过短且需确认的录音：先不宣布「已保存」，由界面弹窗确认后再决定去留（避免"先保存后询问"）
         var saved = string.IsNullOrEmpty(path)
@@ -523,6 +573,7 @@ public sealed class RecorderEngine : IDisposable
             : result.NeedsExportConfirmation
                 ? $"已录制，等待确认是否导出：{Path.GetFileName(path)}"
                 : $"已保存：{Path.GetFileName(path)}";
+        if (manual) saved += "（手动录制）";
         if (playbackPaused) saved += "，播放已暂停。";
         Status(saved);
         return result;

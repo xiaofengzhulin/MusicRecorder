@@ -1,7 +1,7 @@
-# MusicRecorder 开发交接上下文（v1.2.0 基线 → 下一版本）
+# MusicRecorder 开发交接上下文（v1.2.5 基线 → 下一版本）
 
 > **用途**：新对话开始时只要读完本文件，就能获得开发所需的全部上下文，无需重新扫描仓库。
-> 生成时间：基于 `main` @ tag `v1.2.0`，Release 编译 0 warning / 0 error。
+> 生成时间：基于 `main` @ v1.2.5（本轮新增「手动录制」，Windows 三架构；tag 待发布时打），Release 编译 0 warning / 0 error。
 > 面向使用者的完整文档见 [README.md](README.md)；版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
@@ -16,8 +16,8 @@ Windows 桌面小工具：**读取音乐软件当前播放的歌曲 → 自动�
 | --- | --- |
 | 工程目录 | `G:\aiagent\ms\MusicRecorder` |
 | 工作区根目录 | `G:\aiagent\ms` —— 根下的 `logs\`、`scan\` 属于**另一个无关项目**（图片恢复脚本），不要改动 |
-| Git | `main` 已发布 **v1.2.0**（v1.1.3 = `1c6893e`，v1.1.2 = `67a4976`，v1.1.1 = `bfd6afa`，v1.1.0 = `5b19310`，v1.0.0 = `2c4318a`）；`macOS/` 目录为原生 macOS 客户端（PR #1，@ameatrema 贡献）。本文件描述的架构与红线对 v1.1.0 及之后的版本都适用 |
-| 版本号来源 | `MusicRecorder.csproj` 的 `<Version>1.2.0</Version>`（`build.ps1` 从这里读取，改版本只改这一处；`app.manifest` 里的 assemblyIdentity 也一并改） |
+| Git | `main` 已发布 **v1.2.0**（v1.1.3 = `1c6893e`，v1.1.2 = `67a4976`，v1.1.1 = `bfd6afa`，v1.1.0 = `5b19310`，v1.0.0 = `2c4318a`）；当前开发基线 **v1.2.5**（新增「手动录制」，tag 待发布时打）；`macOS/` 目录为原生 macOS 客户端（PR #1，@ameatrema 贡献，本轮不更新、保持 1.2.0）。本文件描述的架构与红线对 v1.1.0 及之后的版本都适用 |
+| 版本号来源 | `MusicRecorder.csproj` 的 `<Version>1.2.5</Version>`（`build.ps1` 从这里读取，改版本只改这一处；`app.manifest` 里的 assemblyIdentity 也一并改） |
 | 未跟踪产物 | `dist\`、`release\`（已被 `.gitignore` 忽略；`*.exe`、`*.pdb`、`*.zip`、`release-notes-*.md` 也忽略） |
 | 基线验证 | .NET SDK `8.0.425`（`%USERPROFILE%\.dotnet\dotnet.exe`）；`dotnet build -c Release` → **0 warning / 0 error**，约 7 秒 |
 | 目标环境 | Windows 10 2004 (19041)+ / Windows 11，x64 / x86（32 位）；发布版自包含运行时，用户无需装 .NET |
@@ -36,7 +36,7 @@ Windows 桌面小工具：**读取音乐软件当前播放的歌曲 → 自动�
 | --- | --- | --- |
 | `MusicRecorder.csproj` | 工程定义、版本号、依赖 | `<Version>` |
 | `App.xaml(.cs)` | 启动、单实例互斥（`Local\MusicRecorder.SingleInstance`）、命令行自检分流、全局异常处理 | `App.xaml.cs:19` 命令行分支 |
-| `MainWindow.xaml(.cs)` | 全部 UI：导出路径 / 播放器与设备与码率 / 歌曲信息与电平 / 大号录制按钮 | `Timer_Tick`（250ms 轮询，`MainWindow.xaml.cs:30`）、`StartRecordingAsync(auto)`、`MaybeAutoStartAsync`（自动录制）、`HandleFinished`/`ConfirmShortRecording`（过短录音确认） |
+| `MainWindow.xaml(.cs)` | 全部 UI：导出路径 / 播放器与设备与码率 / 歌曲信息与电平 / 「开始录制 + 手动录制」按钮组 | `Timer_Tick`（250ms 轮询）、`StartRecordingAsync(auto, forceRestart, manual)`、`ManualRecordButton_Click`（手动录制开关）、`MaybeAutoStartAsync`（自动录制）、`HandleFinished`/`ConfirmShortRecording`（过短录音确认） |
 | `SelfTest.cs` | 自检与开发测试工具（`--selftest/--e2e/--diag/--compare/--gentest/--fakeplayer/--pause`） | `SelfTest.Run(args)` |
 | `Core/MediaSessionService.cs` | SMTC 会话：挑会话、读歌曲信息/进度/状态、定位/切歌/暂停控制、诊断导出 | `RefreshAsync`、`TrySeekToStartAsync`、`PauseCurrentAsync` |
 | `Core/RecorderEngine.cs` | **业务编排核心**：开始 → 轮询结尾判定 → 停止 → 命名导出；`ShortRecordingThreshold`(10s) 与 `RecordResult.IsInterrupted/NeedsExportConfirmation` 决定是否询问导出 | `StartAsync:106`、`TickAsync:322`、`StopAsync:408` |
@@ -63,7 +63,7 @@ MainWindow (DispatcherTimer 250ms)
   └─ MaybeAutoStartAsync()                      ← 自动录制：播放上升沿（单首）／TrackKey 换歌（歌单连录）→ StartRecordingAsync(auto: true, forceRestart: 换歌)
 ```
 
-`StartAsync` 的顺序（`RecorderEngine.cs:106`）：
+`StartAsync` 的顺序（`RecorderEngine.cs`）：
 1. 状态守卫（Recording/Preparing 时拒绝）→ `Preparing`
 2. 惰性初始化 SMTC（失败则明确报错：需 Win10 2004+）
 3. `RefreshAsync(forceSessionRescan: true)` 挑目标播放器；无会话 / 无歌曲时给出**可操作的中文提示**并回到 `Idle`
@@ -73,6 +73,12 @@ MainWindow (DispatcherTimer 250ms)
 7. `BuildOutputPath`（`文件名 = 净化后的歌曲名.mp3`，重名自动 `(2)`…；异常字符替换、`\s+` 折叠、截断 120 字符）
 8. `AudioRecorder.Start(device, path, bitrate, tags)` 启动采集
 9. 记录基线 `_baselineKey = info.TrackKey`、`_maxPosition`、`_startedAt` → `Recording`
+
+**「手动录制」模式（`RecorderOptions.Manual = true`，v1.2.5 新增）走同一入口但跳过 2–6**：
+SMTC 只作「顺带取歌曲名」（`IsAvailable` 才 `RefreshAsync()`，失败/无歌曲 → 时间戳命名，**任何情况不阻断开录**）；
+不 `EnsurePlaying`、不倒回、`_pauseWhenDone=false`；成功后 `ManualMode=true`。
+`TickAsync` 中 `ManualMode` 直接短路（仅保留 `CaptureAborted` 检测）；`RecordResult.Manual=true` 使
+`NeedsExportConfirmation` 恒 false 且界面跳过「完成后打开文件夹」；UI 在手动录制期间置灰「② 录制选项」整组。
 
 `StopAsync`（`RecorderEngine.cs:408`）：换歌时**先立刻暂停播放器**（避免下一首被录进去）→ 按 reason 留尾音余量（换歌 150ms / 曲末与停止 700ms `EndTailGrace`）→ `AudioRecorder.Stop()`（内部再等 400ms 排空缓冲、join 采集线程、完成编码）→ 生成 `RecordResult` → 若尚未暂停则再暂停一次 → 录制 <3s 或未生成文件时追加 warning → `Idle`。
 
@@ -102,6 +108,7 @@ MainWindow (DispatcherTimer 250ms)
 7. **超长保护**：>20 分钟 `MaxRecordDuration` → `Timeout`
 
 `TickAsync` 用 `Interlocked.Exchange(ref _tickBusy)` 防重入（上一 tick 未完成时直接返回 null）。
+**手动录制模式下只保留第 1 条**（采集故障必须保存退出），第 2–7 条全部短路——何时停止由用户点击「手动录制」决定。
 
 ## 6. 设计红线（不要回退这些决策）
 
@@ -194,7 +201,7 @@ MusicRecorder.exe --pause                         # 暂停当前播放器
 | 日志 | `%LOCALAPPDATA%\MusicRecorder\logs\app-yyyyMMdd.log` |
 | 自检输出 | `%TEMP%\MusicRecorder-selftest.txt` |
 | 默认导出目录 | `%USERPROFILE%\Music\MusicRecorder` |
-| 发布产物 | `dist\MusicRecorder.exe`（≈70MB 单文件）、`release\MusicRecorder-v1.2.0-win-x64.zip`、`release\MusicRecorder-v1.2.0-win-x86.zip`、`release\MusicRecorder-v1.2.0-win-arm64.zip` |
+| 发布产物 | `dist\MusicRecorder.exe`（≈70MB 单文件）、`release\MusicRecorder-v1.2.5-win-x64.zip`、`release\MusicRecorder-v1.2.5-win-x86.zip`、`release\MusicRecorder-v1.2.5-win-arm64.zip` |
 
 ---
 
@@ -202,7 +209,7 @@ MusicRecorder.exe --pause                         # 暂停当前播放器
 
 ```
 我在开发 Windows 音乐内录工具 MusicRecorder，工程在 G:\aiagent\ms\MusicRecorder，
-当前基线是 v1.2.0（tag v1.2.0，Release 编译 0 warning）。
+当前基线是 v1.2.5（新增「手动录制」；打 tag 前以提交为准，Release 编译 0 warning）。
 请先完整读 G:\aiagent\ms\MusicRecorder\HANDOFF.md，再按需读具体源码；
 不要修改 G:\aiagent\ms 根目录下的 logs\、scan\（那是无关项目）。
 
