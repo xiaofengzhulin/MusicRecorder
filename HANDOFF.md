@@ -1,7 +1,7 @@
-# MusicRecorder 开发交接上下文（v1.2.5 基线 → 下一版本）
+# MusicRecorder 开发交接上下文（v1.2.6 本地待确认）
 
 > **用途**：新对话开始时只要读完本文件，就能获得开发所需的全部上下文，无需重新扫描仓库。
-> 生成时间：基于 `main` @ v1.2.5（本轮新增「手动录制」，Windows 三架构；tag 待发布时打），Release 编译 0 warning / 0 error。
+> 生成时间：基于本地 v1.2.6 修复版本（本轮新增「手动录制」，Windows 三架构；tag 待发布时打），Release 编译 0 warning / 0 error。
 > 面向使用者的完整文档见 [README.md](README.md)；版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
@@ -16,8 +16,8 @@ Windows 桌面小工具：**读取音乐软件当前播放的歌曲 → 自动�
 | --- | --- |
 | 工程目录 | `G:\aiagent\ms\MusicRecorder` |
 | 工作区根目录 | `G:\aiagent\ms` —— 根下的 `logs\`、`scan\` 属于**另一个无关项目**（图片恢复脚本），不要改动 |
-| Git | `main` 已发布 **v1.2.0**（v1.1.3 = `1c6893e`，v1.1.2 = `67a4976`，v1.1.1 = `bfd6afa`，v1.1.0 = `5b19310`，v1.0.0 = `2c4318a`）；当前开发基线 **v1.2.5**（新增「手动录制」，tag 待发布时打）；`macOS/` 目录为原生 macOS 客户端（PR #1，@ameatrema 贡献，本轮不更新、保持 1.2.0）。本文件描述的架构与红线对 v1.1.0 及之后的版本都适用 |
-| 版本号来源 | `MusicRecorder.csproj` 的 `<Version>1.2.5</Version>`（`build.ps1` 从这里读取，改版本只改这一处；`app.manifest` 里的 assemblyIdentity 也一并改） |
+| Git | `main` 已发布 **v1.2.0**（v1.1.3 = `1c6893e`，v1.1.2 = `67a4976`，v1.1.1 = `bfd6afa`，v1.1.0 = `5b19310`，v1.0.0 = `2c4318a`）；当前本地待确认版本 **v1.2.6**（新增「手动录制」，tag 待发布时打）；`macOS/` 目录为原生 macOS 客户端（PR #1，@ameatrema 贡献，本轮不更新、保持 1.2.0）。本文件描述的架构与红线对 v1.1.0 及之后的版本都适用 |
+| 版本号来源 | `MusicRecorder.csproj` 的 `<Version>1.2.6</Version>`（`build.ps1` 从这里读取，改版本只改这一处；`app.manifest` 里的 assemblyIdentity 也一并改） |
 | 未跟踪产物 | `dist\`、`release\`（已被 `.gitignore` 忽略；`*.exe`、`*.pdb`、`*.zip`、`release-notes-*.md` 也忽略） |
 | 基线验证 | .NET SDK `8.0.425`（`%USERPROFILE%\.dotnet\dotnet.exe`）；`dotnet build -c Release` → **0 warning / 0 error**，约 7 秒 |
 | 目标环境 | Windows 10 2004 (19041)+ / Windows 11，x64 / x86（32 位）；发布版自包含运行时，用户无需装 .NET |

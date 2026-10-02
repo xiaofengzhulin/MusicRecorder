@@ -327,11 +327,23 @@ public sealed class AudioRecorder : IDisposable
     /// <summary>探测 LAME 原生库能否加载；不可加载则不触碰输出文件，直接走 Media Foundation 降级。</summary>
     private static bool LameNativeAvailable()
     {
+        IntPtr handle = IntPtr.Zero;
         try
         {
-            return NativeLibrary.TryLoad(LameLibraryName, typeof(LameMP3FileWriter).Assembly, null, out _);
+            if (!NativeLibrary.TryLoad(LameLibraryName, typeof(LameMP3FileWriter).Assembly, null, out handle))
+                return false;
+            return true;
         }
         catch { return false; }
+        finally
+        {
+            // 这里只是探测；真正的 LameMP3FileWriter 会自行加载并持有库。
+            // 不释放探测句柄会让每次录音额外泄漏一个 DLL 引用。
+            if (handle != IntPtr.Zero)
+            {
+                try { NativeLibrary.Free(handle); } catch { }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ 编码目标

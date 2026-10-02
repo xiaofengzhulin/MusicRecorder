@@ -1,5 +1,7 @@
 # MusicRecorder · 音乐内录工具
 
+> 当前 Windows 修复版本：**1.2.6**。ARM64 分发包会随附匹配架构的原生 LAME 组件；macOS 客户端仍保持 1.2.0。
+
 > **平台支持**：原有 Windows 10/11（x64 / x86 / Windows on ARM）版本继续保留；仓库现已新增原生 **macOS Apple Silicon（M1/M2/M3/M4）** 客户端。Mac 的构建、权限与播放器兼容说明见 [`macOS/README.md`](macOS/README.md)。
 
 > **macOS 1.2.0**：新增基于系统“正在播放”的通用识别，可覆盖向 macOS 控制中心发布媒体信息的 QQ 音乐、浏览器及其他第三方播放器；同时支持自动录制单首和自动拆分整张歌单。

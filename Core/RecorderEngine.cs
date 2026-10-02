@@ -395,13 +395,22 @@ public sealed class RecorderEngine : IDisposable
         if (Interlocked.Exchange(ref _tickBusy, 1) == 1) return null;
         try
         {
+            if (State != RecorderState.Recording) return null;
+
+            // 采集异常必须优先处理；手动录制不依赖媒体会话，不能先 RefreshAsync。
+            if (_recorder.CaptureAborted)
+            {
+                _warnings.Add("音频采集流意外中断。");
+                return await StopAsync(StopReason.CaptureError);
+            }
+
+            if (ManualMode) return null;
+
             var info = await _media.RefreshAsync();
             LastInfo = info;
             InfoUpdated?.Invoke(info);
 
             if (State != RecorderState.Recording) return null;
-
-            var elapsed = DateTime.Now - _startedAt;
 
             if (_recorder.CaptureAborted)
             {
@@ -409,10 +418,7 @@ public sealed class RecorderEngine : IDisposable
                 return await StopAsync(StopReason.CaptureError);
             }
 
-            // 手动录制：不依赖播放器（可能根本没开播放器），换歌 / 暂停 / 曲末 / 进度回退 / 20 分钟超长
-            // 等自动停止判据一律不适用——何时结束完全由用户再次点击「手动录制」决定；
-            // 仅保留上面的采集流中断检测（那属于技术故障，必须保存退出）。
-            if (ManualMode) return null;
+            var elapsed = DateTime.Now - _startedAt;
 
             if (info is null || !info.HasTrack)
             {
@@ -516,7 +522,6 @@ public sealed class RecorderEngine : IDisposable
                 break;
         }
 
-        var recorded = _recorder.Recorded;
         string? path = null;
         try
         {
@@ -527,6 +532,7 @@ public sealed class RecorderEngine : IDisposable
             Log.Error("停止录制失败", ex);
             _warnings.Add($"停止录制时出错：{ex.Message}");
         }
+        var recorded = _recorder.Recorded;
 
         var result = new RecordResult
         {

@@ -51,12 +51,33 @@ if (-not ($Publish -or $Package)) {
 
 # ---------------------------------------------------------------- 发布单文件
 $dist = Join-Path $root 'dist'
-if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
+# 清理上一次发布目录；Windows PowerShell 删除被短暂占用的文件时重试
+if (Test-Path $dist) {
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item $dist -Recurse -Force -ErrorAction Stop
+            break
+        }
+        catch {
+            if ($attempt -eq 5) { throw }
+            Start-Sleep -Milliseconds 300
+        }
+    }
+}
+New-Item -ItemType Directory -Path $dist -Force | Out-Null
 
 & $dotnet publish $project -c $Configuration -r $RuntimeIdentifier --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:EnableCompressionInSingleFile=true -o $dist
 if ($LASTEXITCODE -ne 0) { throw "发布失败（exit $LASTEXITCODE）" }
+
+# ARM64 原生 LAME 是运行时由 NAudio.Lame 加载的旁车 DLL；
+# 单文件发布不会自动把自定义 None 文件嵌入 exe，因此必须显式复制到 dist。
+$nativeLame = Join-Path $root ("native\{0}\libmp3lame.64.dll" -f $RuntimeIdentifier)
+if (Test-Path $nativeLame) {
+    Copy-Item $nativeLame (Join-Path $dist 'libmp3lame.64.dll') -Force
+    Write-Host "原生 LAME：$nativeLame -> $dist\libmp3lame.64.dll"
+}
 
 $exe = Join-Path $dist 'MusicRecorder.exe'
 Write-Host ("`n发布完成：{0}（{1:N1} MB）" -f $exe, ((Get-Item $exe).Length / 1MB))
@@ -74,6 +95,9 @@ if (Test-Path $zip) { Remove-Item $zip -Force }
 New-Item -ItemType Directory -Path $pkgDir -Force | Out-Null
 
 Copy-Item $exe (Join-Path $pkgDir 'MusicRecorder.exe')
+if (Test-Path $nativeLame) {
+    Copy-Item $nativeLame (Join-Path $pkgDir 'libmp3lame.64.dll') -Force
+}
 foreach ($extra in '使用说明.txt', 'README.md', 'CHANGELOG.md', 'LAME-NOTICE.txt') {
     $src = Join-Path $root $extra
     if (Test-Path $src) { Copy-Item $src (Join-Path $pkgDir $extra) }

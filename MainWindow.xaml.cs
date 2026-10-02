@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
 
     private bool _forceClose;
+    private bool _closingAfterRecording;
     private string _lastStatus = "";
     private string _playerSignature = "";
 
@@ -167,7 +168,7 @@ public partial class MainWindow : Window
         var autoSingle = AutoRecordCheck.IsChecked == true;
         var playlist = PlaylistCheck.IsChecked == true;
         if (!autoSingle && !playlist) { _autoRecordArmed = true; return; }
-        if (_promptOpen || _autoStarting || _engine.State != RecorderState.Idle) return;
+        if (_closingAfterRecording || _forceClose || _promptOpen || _autoStarting || _engine.State != RecorderState.Idle) return;
 
         var info = _engine.LastInfo;
         if (info is null || !info.IsPlaying)
@@ -539,8 +540,8 @@ public partial class MainWindow : Window
             var modeTag = result.Manual ? "（手动录制）" : "";
             SetStatus($"已导出：{Path.GetFileName(result.FilePath)}{modeTag}｜时长 {FormatTime(result.Duration)}{extra}");
 
-            // 手动录制模式下「完成后打开文件夹」不生效
-            if (OpenFolderCheck.IsChecked == true && !result.Manual)
+            // 普通录制和手动录制都遵循「完成后打开文件夹」选项。
+            if (OpenFolderCheck.IsChecked == true)
             {
                 try
                 {
@@ -704,10 +705,17 @@ public partial class MainWindow : Window
         if (_forceClose || !_engine.IsRecording) return;
 
         e.Cancel = true;
+        _closingAfterRecording = true;
+        _timer.Stop();
         var answer = MessageBox.Show(this,
             "正在录制中。是否停止录制并保存文件后退出？", "MusicRecorder",
             MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (answer != MessageBoxResult.Yes) return;
+        if (answer != MessageBoxResult.Yes)
+        {
+            _closingAfterRecording = false;
+            _timer.Start();
+            return;
+        }
 
         RecordButton.IsEnabled = false;
         try
@@ -718,6 +726,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Log.Error("退出时停止录制失败", ex);
+            _closingAfterRecording = false;
+            _timer.Start();
+            return;
         }
         _forceClose = true;
         Close();
